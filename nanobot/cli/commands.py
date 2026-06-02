@@ -5,6 +5,7 @@ import os
 import select
 import signal
 import sys
+import uuid
 from collections.abc import Callable
 from contextlib import nullcontext, suppress
 from pathlib import Path
@@ -834,6 +835,8 @@ def _run_gateway(
         if isinstance(cron_tool, CronTool):
             cron_token = cron_tool.set_cron_context(True)
 
+        execution_session_key = f"cron:{job.id}:{uuid.uuid4().hex}"
+
         async def _silent(*_args, **_kwargs):
             pass
 
@@ -844,7 +847,7 @@ def _run_gateway(
         try:
             resp = await agent.process_direct(
                 reminder_note,
-                session_key=f"cron:{job.id}",
+                session_key=execution_session_key,
                 channel=job.payload.channel or "cli",
                 chat_id=job.payload.to or "direct",
                 on_progress=_silent,

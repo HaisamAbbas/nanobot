@@ -1175,6 +1175,7 @@ def test_gateway_cron_evaluator_receives_scheduled_reminder_context(
             seen["agent"] = self
 
         async def process_direct(self, *_args, **_kwargs):
+            seen.setdefault("process_direct_session_keys", []).append(_kwargs["session_key"])
             return OutboundMessage(
                 channel="telegram",
                 chat_id="user-1",
@@ -1257,6 +1258,8 @@ def test_gateway_cron_evaluator_receives_scheduled_reminder_context(
             content="Time to stretch.",
         )
     )
+    first_session_key = seen["process_direct_session_keys"][0]
+    assert first_session_key.startswith("cron:cron-1:")
     assert seen["session_key"] == "telegram:user-1"
     saved_session = seen["saved_session"]
     assert isinstance(saved_session, _FakeSession)
@@ -1267,6 +1270,20 @@ def test_gateway_cron_evaluator_receives_scheduled_reminder_context(
             "_channel_delivery": True,
         }
     ]
+
+    bus.publish_outbound.reset_mock()
+    response_2 = asyncio.run(cron.on_job(job))
+
+    assert response_2 == "Time to stretch."
+    assert seen["process_direct_session_keys"][1].startswith("cron:cron-1:")
+    assert seen["process_direct_session_keys"][1] != first_session_key
+    bus.publish_outbound.assert_awaited_once_with(
+        OutboundMessage(
+            channel="telegram",
+            chat_id="user-1",
+            content="Time to stretch.",
+        )
+    )
 
 
 def test_gateway_cron_job_suppresses_intermediate_progress(
