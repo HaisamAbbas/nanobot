@@ -974,7 +974,9 @@ def _run_gateway(
             return response
 
         if is_bound_cron_job(job):
-            return await run_bound_cron_job(job, agent=agent, cron=cron)
+            return await run_bound_cron_job(
+                job, agent=agent, cron=cron, deliver=_deliver_to_channel,
+            )
 
         reason = "unbound agent cron job must be recreated from a chat session"
         logger.warning(

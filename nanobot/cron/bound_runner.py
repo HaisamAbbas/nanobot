@@ -8,17 +8,22 @@ import time
 import uuid
 from typing import Any, Protocol
 
+from loguru import logger
+
 from nanobot.agent.tools.cron import CronTool
 from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.cron.session_delivery import origin_delivery_context
 from nanobot.cron.session_turns import CRON_DEFER_UNTIL_IDLE_META, CRON_TRIGGER_META
 from nanobot.cron.types import CronJob
 from nanobot.cron.webui_metadata import cron_proactive_delivery_metadata
+from nanobot.utils.evaluator import evaluate_response
 from nanobot.utils.prompt_templates import render_template
 
 
 class BoundCronAgent(Protocol):
     tools: Any
+    provider: Any
+    model: str
 
     async def submit_cron_turn(self, msg: InboundMessage) -> OutboundMessage | None:
         ...
@@ -26,6 +31,13 @@ class BoundCronAgent(Protocol):
 
 class CronRunRecorder(Protocol):
     def write_run_record(self, run_id: str, record: dict[str, Any]) -> None:
+        ...
+
+
+class DeliveryCallback(Protocol):
+    async def __call__(
+        self, msg: OutboundMessage, *, record: bool = False, session_key: str | None = None,
+    ) -> None:
         ...
 
 
@@ -64,8 +76,15 @@ async def run_bound_cron_job(
     *,
     agent: BoundCronAgent,
     cron: CronRunRecorder,
+    deliver: DeliveryCallback | None = None,
 ) -> str | None:
-    """Execute a session-bound cron job as a normal agent session turn."""
+    """Execute a session-bound cron job as a normal agent session turn.
+
+    After the LLM produces a response, a lightweight evaluator call decides
+    whether the result is actionable enough to notify the user.  Routine
+    "nothing to report" answers are silenced — matching the existing
+    heartbeat behaviour.
+    """
     session_key = job.payload.session_key
     if not session_key:
         raise ValueError(f"cron job {job.id} is missing payload.session_key")
@@ -148,4 +167,21 @@ async def run_bound_cron_job(
             "response": response,
         },
     )
+
+    # Post-run notification gate: only deliver if the response contains
+    # actionable information.  Uses default_notify=True (unlike heartbeat
+    # which uses False) because user-created cron jobs are intentional —
+    # a missed alert from an evaluator failure is worse than a false
+    # positive notification.
+    if response and resp is not None and deliver is not None:
+        should_notify = await evaluate_response(
+            response, prompt, agent.provider, agent.model,
+            default_notify=True,
+        )
+        if should_notify:
+            logger.info("Cron job '{}': delivering response", job.name)
+            await deliver(resp, record=True, session_key=session_key)
+        else:
+            logger.info("Cron job '{}': silenced by post-run evaluation", job.name)
+
     return response

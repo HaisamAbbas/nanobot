@@ -42,6 +42,7 @@ from nanobot.command import CommandContext, CommandRouter, register_builtin_comm
 from nanobot.config.schema import AgentDefaults, ModelPresetConfig
 from nanobot.cron.session_turns import (
     cron_history_overrides,
+    is_cron_turn,
 )
 from nanobot.providers.base import LLMProvider
 from nanobot.providers.factory import ProviderSnapshot
@@ -1008,7 +1009,11 @@ class AgentLoop:
                     completed_channel = msg.channel
                     completed_chat_id = msg.chat_id
                     if response is not None:
-                        await self.bus.publish_outbound(response)
+                        # Cron turns suppress automatic delivery; the cron
+                        # runner evaluates the response and delivers only when
+                        # the content is actionable (see run_bound_cron_job).
+                        if not is_cron_turn(msg.metadata):
+                            await self.bus.publish_outbound(response)
                         completed_channel = response.channel
                         completed_chat_id = response.chat_id
                     elif msg.channel == "cli":
